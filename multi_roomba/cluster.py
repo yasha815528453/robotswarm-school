@@ -15,9 +15,20 @@ class Cluster:
 
     # ── peer tracking ─────────────────────────────────────────────────────
 
-    def update_peer(self, peer_id: str, peer_ip: str):
+    def update_peer(self, peer_id: str, peer_ip: str, state: dict | None = None):
+        """Update last-seen, IP, and (optionally) live state for a peer."""
         with self._lock:
-            self._peers[peer_id] = {"ip": peer_ip, "last_seen": time.monotonic()}
+            entry = self._peers.get(peer_id, {})
+            entry["ip"] = peer_ip
+            entry["last_seen"] = time.monotonic()
+            if state is not None:
+                entry["state"] = state
+            self._peers[peer_id] = entry
+
+    def get_peer_states(self) -> dict[str, dict]:
+        """Return {peer_id: state_dict} for peers that have reported state."""
+        with self._lock:
+            return {pid: info["state"] for pid, info in self._peers.items() if "state" in info}
 
     def remove_peer(self, peer_id: str):
         with self._lock:

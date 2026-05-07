@@ -20,7 +20,7 @@ from grid import Grid
 from gui import Gui
 from network import Network
 from protocol import (
-    ANNOUNCE, GOODBYE, GRID_UPDATE, HEARTBEAT, ZONE_ASSIGN,
+    ANNOUNCE, GOODBYE, GRID_UPDATE, HEARTBEAT, RESET, ZONE_ASSIGN,
     decode, encode,
 )
 from robot import Robot
@@ -57,7 +57,7 @@ def main():
     # ── helpers ───────────────────────────────────────────────────────────
 
     def reelect_and_assign():
-        """Recompute leader and, if we are it, push zone assignments."""
+        """Recompute leader and, if we are it, broadcast all zone assignments."""
         if not _reelect_lock.acquire(blocking=False):
             return
         try:
@@ -66,33 +66,34 @@ def main():
             if cluster.am_i_leader():
                 members = cluster.all_member_ids()
                 zones = coordinator.assign_zones(members)
-                for rid, zone in zones.items():
-                    if rid == robot_id:
-                        robot.zone = zone
-                    else:
-                        ip = cluster.peer_ip(rid)
-                        if ip:
-                            msg = encode(ZONE_ASSIGN, {"robot_id": rid, "zone": list(zone)}, robot_id)
-                            net.send_unicast(ip, msg)
+                # Apply our own zone locally
+                if robot_id in zones:
+                    robot.zone = zones[robot_id]
+                # Broadcast all assignments in one packet — every peer reads its own
+                payload = {rid: list(z) for rid, z in zones.items()}
+                net.send_broadcast(encode(ZONE_ASSIGN, payload, robot_id))
         finally:
             _reelect_lock.release()
 
     def broadcast_grid():
         net.send_broadcast(encode(GRID_UPDATE, {"cells": grid.to_list()}, robot_id))
 
-    def push_grid_to_leader():
-        leader_id = cluster.get_leader()
-        if leader_id and leader_id != robot_id:
-            ip = cluster.peer_ip(leader_id)
-            if ip:
-                net.send_unicast(ip, encode(GRID_UPDATE, {"cells": grid.to_list()}, robot_id))
+    def my_state() -> dict:
+        s = robot.snapshot()
+        return {
+            "ip":     cluster.my_ip,
+            "row":    s["row"],
+            "col":    s["col"],
+            "zone":   list(s["zone"]) if s["zone"] else None,
+            "rstate": s["state"],
+        }
 
     # ── threads ───────────────────────────────────────────────────────────
 
     def heartbeat_loop():
         while True:
             time.sleep(HEARTBEAT_INTERVAL)
-            net.send_broadcast(encode(HEARTBEAT, {"ip": cluster.my_ip}, robot_id))
+            net.send_broadcast(encode(HEARTBEAT, my_state(), robot_id))
             dead = cluster.expire_dead_peers()
             if dead:
                 logger.info("peers timed out: %s", dead)
@@ -105,21 +106,20 @@ def main():
 
             changed = robot.step(grid)
 
+            # Every robot broadcasts its (monotonic) clean-set on change.
+            # Receivers union-merge — no overwrite, so no race-condition wipes.
             if changed:
-                if cluster.am_i_leader():
-                    broadcast_grid()
-                else:
-                    push_grid_to_leader()
+                broadcast_grid()
 
             if grid.all_clean():
                 if reset_at is None:
                     reset_at = time.monotonic()
                 elif time.monotonic() - reset_at >= RESET_DELAY:
-                    logger.info("grid fully clean — resetting")
-                    grid.reset()
-                    reset_at = None
                     if cluster.am_i_leader():
-                        broadcast_grid()
+                        logger.info("grid fully clean — broadcasting RESET")
+                        grid.reset()
+                        net.send_broadcast(encode(RESET, {}, robot_id))
+                    reset_at = None
             else:
                 reset_at = None
 
@@ -144,31 +144,32 @@ def main():
 
             if msg_type == ANNOUNCE:
                 cluster.update_peer(sender, payload["ip"])
-                # Send our current grid so the new peer can sync
-                net.send_unicast(payload["ip"],
-                                 encode(GRID_UPDATE, {"cells": grid.to_list()}, robot_id))
+                # Catch the new peer up on our current clean set
+                broadcast_grid()
                 reelect_and_assign()
 
             elif msg_type == HEARTBEAT:
-                cluster.update_peer(sender, payload["ip"])
+                # Heartbeat carries live peer state (position, zone, etc.)
+                cluster.update_peer(sender, payload.get("ip", src_ip), state=payload)
                 if cluster.get_leader() is None:
                     reelect_and_assign()
 
             elif msg_type == ZONE_ASSIGN:
-                if payload["robot_id"] == robot_id:
-                    zone = tuple(payload["zone"])
+                # Payload is {robot_id: [col_start, col_end], ...} — read our own
+                if robot_id in payload:
+                    zone = tuple(payload[robot_id])
                     robot.zone = zone
                     logger.info("zone assigned: cols %s–%s", zone[0], zone[1])
+                # Reflect everyone's zones in the local coordinator view (for GUI)
+                coordinator.assign_zones(list(payload.keys()))
 
             elif msg_type == GRID_UPDATE:
-                cells = payload["cells"]
-                if cluster.am_i_leader():
-                    # Merge non-leader updates into master grid, then rebroadcast
-                    grid.merge(cells)
-                    broadcast_grid()
-                elif sender == cluster.get_leader():
-                    # Accept authoritative state from leader
-                    grid.from_list(cells)
+                # Always merge — cleaning is monotonic, so union is the safe op.
+                grid.merge(payload["cells"])
+
+            elif msg_type == RESET:
+                logger.info("RESET received from %s", sender)
+                grid.reset()
 
             elif msg_type == GOODBYE:
                 cluster.remove_peer(sender)

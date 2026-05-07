@@ -36,12 +36,14 @@ class Gui:
         cells     = self._grid.snapshot()
         zones     = self._coordinator.get_all_zones()
         robot_s   = self._robot.snapshot()
+        peers     = self._cluster.get_peer_states()
 
         self._draw_zone_overlays(zones)
         self._draw_cells(cells)
         self._draw_target(robot_s)
+        self._draw_peers(peers)
         self._draw_robot(robot_s)
-        self._draw_status(robot_s, zones)
+        self._draw_status(robot_s, zones, peers)
 
         pygame.display.flip()
         self._clock.tick(30)
@@ -81,16 +83,40 @@ class Gui:
             tr, tc = robot_s["target"]
             pygame.draw.circle(self._screen, COLOR_TARGET, self._cell_center(tr, tc), 7)
 
+    _PEER_COLORS = [
+        (220,  60,  60),   # red
+        ( 60, 180,  75),   # green
+        (245, 180,  40),   # amber
+        (160,  80, 200),   # purple
+        ( 50, 200, 200),   # teal
+    ]
+
+    def _peer_color(self, peer_id: str):
+        return self._PEER_COLORS[hash(peer_id) % len(self._PEER_COLORS)]
+
     def _draw_robot(self, robot_s: dict):
         cx, cy = self._cell_center(robot_s["row"], robot_s["col"])
         radius = CELL_SIZE // 3
+        # Outer white ring distinguishes "me" from peers
+        pygame.draw.circle(self._screen, (255, 255, 255), (cx, cy), radius + 3)
         pygame.draw.circle(self._screen, COLOR_ROBOT, (cx, cy), radius)
-        # Single-char label from robot ID
         label_ch = robot_s["id"][-1].upper()
         label = self._big_font.render(label_ch, True, (255, 255, 255))
         self._screen.blit(label, label.get_rect(center=(cx, cy)))
 
-    def _draw_status(self, robot_s: dict, zones: dict):
+    def _draw_peers(self, peers: dict):
+        radius = CELL_SIZE // 3
+        for pid, st in peers.items():
+            if "row" not in st or "col" not in st:
+                continue
+            cx, cy = self._cell_center(st["row"], st["col"])
+            color = self._peer_color(pid)
+            pygame.draw.circle(self._screen, color, (cx, cy), radius)
+            label_ch = pid[-1].upper()
+            label = self._big_font.render(label_ch, True, (255, 255, 255))
+            self._screen.blit(label, label.get_rect(center=(cx, cy)))
+
+    def _draw_status(self, robot_s: dict, zones: dict, peers: dict):
         bar_y = WINDOW_HEIGHT - STATUS_BAR_HEIGHT
         pygame.draw.rect(self._screen, COLOR_STATUS_BG, (0, bar_y, WINDOW_WIDTH, STATUS_BAR_HEIGHT))
 
@@ -103,7 +129,7 @@ class Gui:
 
         line1 = f"ID: {robot_s['id']}   state: {robot_s['state']}   zone cols: {zone_str}"
         line2 = (f"leader: {leader}{'  ★' if is_me else ''}   "
-                 f"peers: {n_peers}   "
+                 f"peers: {n_peers} ({','.join(sorted(peers.keys())) or '-'})   "
                  f"clean: {total - dirty}/{total}")
 
         self._screen.blit(self._font.render(line1, True, COLOR_TEXT), (8, bar_y + 8))
