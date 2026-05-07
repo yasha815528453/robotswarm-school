@@ -128,10 +128,18 @@ def main():
                 logger.info("peer %s timed out", d)
 
     def dispatch_loop():
+        msg_counts: dict[str, int] = {}
+        last_log = time.monotonic()
         while True:
             try:
                 data, (src_ip, _) = incoming.get(timeout=0.1)
             except queue.Empty:
+                # Every 5 s, summarize what we've heard from each peer
+                if time.monotonic() - last_log >= 5.0:
+                    if msg_counts:
+                        logger.info("rx in last 5s: %s", msg_counts)
+                    msg_counts = {}
+                    last_log = time.monotonic()
                 continue
             try:
                 msg = decode(data)
@@ -143,6 +151,8 @@ def main():
             payload  = msg["payload"]
             if sender == robot_id:
                 continue
+
+            msg_counts[sender] = msg_counts.get(sender, 0) + 1
 
             if msg_type == STATE:
                 cluster.update_peer(sender, payload.get("ip", src_ip), state=payload)

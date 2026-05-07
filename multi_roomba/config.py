@@ -28,7 +28,7 @@ BROADCAST_ADDR = "255.255.255.255"
 # Timing (seconds)
 TICK_INTERVAL      = 1.0    # how often a robot moves/cleans (wall-clock-synced)
 BROADCAST_INTERVAL = 0.25   # how often each robot broadcasts STATE (~4 Hz, smooth + dropout-tolerant)
-PEER_TIMEOUT       = 4.0    # drop a peer after this much silence
+PEER_TIMEOUT       = 8.0    # drop a peer after this much silence (16x BROADCAST_INTERVAL)
 RESET_DELAY        = 3.0    # idle wait before re-dirtying a fully-clean grid
 
 # Window
