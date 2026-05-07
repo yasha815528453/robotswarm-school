@@ -76,7 +76,9 @@ def main():
             _reelect_lock.release()
 
     def broadcast_grid():
-        net.send_broadcast(encode(GRID_UPDATE, {"cells": grid.to_list()}, robot_id))
+        # Bundle our live state with the grid so peers track our position at tick rate, not heartbeat rate.
+        payload = {"cells": grid.to_list(), "state": my_state()}
+        net.send_broadcast(encode(GRID_UPDATE, payload, robot_id))
 
     def my_state() -> dict:
         s = robot.snapshot()
@@ -166,6 +168,10 @@ def main():
             elif msg_type == GRID_UPDATE:
                 # Always merge — cleaning is monotonic, so union is the safe op.
                 grid.merge(payload["cells"])
+                # Update peer's live position from the bundled state, if present
+                peer_state = payload.get("state")
+                if peer_state:
+                    cluster.update_peer(sender, peer_state.get("ip", src_ip), state=peer_state)
 
             elif msg_type == RESET:
                 logger.info("RESET received from %s", sender)
