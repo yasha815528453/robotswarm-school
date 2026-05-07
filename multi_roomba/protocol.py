@@ -1,11 +1,11 @@
 import json
 
-ANNOUNCE    = "ANNOUNCE"
-HEARTBEAT   = "HEARTBEAT"
-ZONE_ASSIGN = "ZONE_ASSIGN"
-GRID_UPDATE = "GRID_UPDATE"
-RESET       = "RESET"
-GOODBYE     = "GOODBYE"
+# Single state-bearing message replaces HEARTBEAT + GRID_UPDATE + ZONE_ASSIGN.
+# It carries everything peers need: position, target, path, grid clean-set.
+ANNOUNCE = "ANNOUNCE"
+STATE    = "STATE"
+RESET    = "RESET"
+GOODBYE  = "GOODBYE"
 
 
 def encode(msg_type: str, payload: dict, sender_id: str) -> bytes:
