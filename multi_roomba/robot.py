@@ -46,17 +46,36 @@ class Robot:
     # ── movement ──────────────────────────────────────────────────────────
 
     def step(self, grid) -> bool:
-        """Advance robot by one tick. Returns True if something changed."""
+        """
+        Advance robot by one tick. Two-phase cleaning:
+          tick A — arrive on dirty cell → state = CLEANING, cell stays dirty
+          tick B — finish cleaning AND move to next dirty cell in the same atomic step
+        This way a cell only flips to CLEAN at the moment the robot leaves it.
+        """
         with self._lock:
             pos = (self._row, self._col)
 
-            # Clean current cell before moving
-            if grid.is_dirty(self._row, self._col):
+            # Phase B: complete cleaning, then move on the same tick
+            if self._state == CLEANING:
                 grid.mark_clean(self._row, self._col)
+                self._target = self._pick_target(grid)
+                self._path = []
+                if self._target is None:
+                    self._state = IDLE
+                    return True
+                self._state = MOVING
+                self._path = self._bfs(pos, self._target)
+                if self._path:
+                    next_r, next_c = self._path.pop(0)
+                    self._row, self._col = next_r, next_c
+                return True
+
+            # Phase A: on a dirty cell — start cleaning (cell stays dirty this tick)
+            if grid.is_dirty(self._row, self._col):
                 self._state = CLEANING
                 return True
 
-            # Pick a new target when needed
+            # On a clean cell — keep heading toward target
             if self._target is None or self._target == pos:
                 self._target = self._pick_target(grid)
                 self._path = []
@@ -65,7 +84,6 @@ class Robot:
                     return False
                 self._state = MOVING
 
-            # Compute path lazily
             if not self._path:
                 self._path = self._bfs(pos, self._target)
                 if not self._path:

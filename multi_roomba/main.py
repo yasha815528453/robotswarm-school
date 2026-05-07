@@ -86,6 +86,7 @@ def main():
             "ip":     cluster.my_ip,
             "row":    s["row"],
             "col":    s["col"],
+            "target": list(s["target"]) if s["target"] else None,
             "zone":   list(s["zone"]) if s["zone"] else None,
             "rstate": s["state"],
         }
@@ -104,14 +105,16 @@ def main():
     def tick_loop():
         reset_at: float | None = None
         while True:
-            time.sleep(TICK_INTERVAL)
+            # Wall-clock-synced tick: every robot fires at the same whole-second boundary
+            # (assuming laptops are NTP-synced, which is the default on consumer OSes).
+            now = time.time()
+            next_tick = (int(now / TICK_INTERVAL) + 1) * TICK_INTERVAL
+            time.sleep(max(0.0, next_tick - now))
 
-            changed = robot.step(grid)
-
-            # Every robot broadcasts its (monotonic) clean-set on change.
-            # Receivers union-merge — no overwrite, so no race-condition wipes.
-            if changed:
-                broadcast_grid()
+            robot.step(grid)
+            # Always broadcast — even if nothing changed. Idempotent merge means
+            # redundant packets are harmless, and dropped UDP packets self-heal next tick.
+            broadcast_grid()
 
             if grid.all_clean():
                 if reset_at is None:

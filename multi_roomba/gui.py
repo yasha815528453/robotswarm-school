@@ -100,6 +100,9 @@ class Gui:
         # Outer white ring distinguishes "me" from peers
         pygame.draw.circle(self._screen, (255, 255, 255), (cx, cy), radius + 3)
         pygame.draw.circle(self._screen, COLOR_ROBOT, (cx, cy), radius)
+        # Yellow outline when in CLEANING phase
+        if robot_s["state"] == "cleaning":
+            pygame.draw.circle(self._screen, COLOR_TARGET, (cx, cy), radius + 5, 2)
         label_ch = robot_s["id"][-1].upper()
         label = self._big_font.render(label_ch, True, (255, 255, 255))
         self._screen.blit(label, label.get_rect(center=(cx, cy)))
@@ -109,9 +112,16 @@ class Gui:
         for pid, st in peers.items():
             if "row" not in st or "col" not in st:
                 continue
-            cx, cy = self._cell_center(st["row"], st["col"])
             color = self._peer_color(pid)
+            # Peer's target ring (their declared intent)
+            if st.get("target"):
+                tr, tc = st["target"]
+                pygame.draw.circle(self._screen, color, self._cell_center(tr, tc), 7, 2)
+            cx, cy = self._cell_center(st["row"], st["col"])
             pygame.draw.circle(self._screen, color, (cx, cy), radius)
+            # Pulsing outline when peer is in CLEANING phase
+            if st.get("rstate") == "cleaning":
+                pygame.draw.circle(self._screen, (255, 255, 255), (cx, cy), radius + 4, 2)
             label_ch = pid[-1].upper()
             label = self._big_font.render(label_ch, True, (255, 255, 255))
             self._screen.blit(label, label.get_rect(center=(cx, cy)))
